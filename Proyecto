@@ -1,0 +1,111 @@
+# -*- coding: utf-8 -*-
+"""
+
+@author: Alfredo
+"""
+
+import cv2
+import numpy as np
+
+# Cargar el modelo preentrenado y configuración
+net = cv2.dnn.readNet("yolov3.weights", "yolov3.cfg")
+layer_names = net.getUnconnectedOutLayersNames()
+
+# Cargar los nombres de las clases desde un archivo
+with open("coco.names", "r") as f:
+    classes = [line.strip() for line in f.readlines()]
+
+# Inicializar la cámara (puedes cambiar el número de cámara según tu configuración)
+cap = cv2.VideoCapture(0)
+
+# Elegir la clase que deseas contar (por ejemplo, "persona")
+clase_objetivo = "person"
+clase_objetivo = "pottedplant"
+# Inicializar variables para el seguimiento
+contador_objetivo = 0
+objeto_en_cuadro = False
+
+while True:
+    # Leer el fotograma de la cámara
+    ret, frame = cap.read()
+
+    # Obtener dimensiones del fotograma
+    height, width, _ = frame.shape
+
+    # Normalizar el fotograma y pasar al modelo
+    blob = cv2.dnn.blobFromImage(frame, 1/255.0, (416, 416), swapRB=True, crop=False)
+    net.setInput(blob)
+
+    # Realizar la inferencia y obtener las detecciones
+    outs = net.forward(layer_names)
+
+    # Filtrar detecciones con alta confianza
+    conf_threshold = 0.5
+    boxes = []
+    confidences = []
+    class_ids = []
+
+    for out in outs:
+        for detection in out:
+            scores = detection[5:]
+            class_id = np.argmax(scores)
+            confidence = scores[class_id]
+
+            if confidence > conf_threshold:
+                center_x = int(detection[0] * width)
+                center_y = int(detection[1] * height)
+                w = int(detection[2] * width)
+                h = int(detection[3] * height)
+
+                x = int(center_x - w / 2)
+                y = int(center_y - h / 2)
+
+                boxes.append([x, y, w, h])
+                confidences.append(float(confidence))
+                class_ids.append(class_id)
+
+    # Aplicar supresión no máxima para eliminar detecciones redundantes
+    nms_threshold = 0.4
+    indices = cv2.dnn.NMSBoxes(boxes, confidences, conf_threshold, nms_threshold)
+
+    # Verificar si el objeto objetivo está presente y contar hasta que salga del cuadro
+    if objeto_en_cuadro:
+        objeto_presente = False
+        for i in indices:
+            clase_actual = classes[class_ids[i]]
+            if clase_actual == clase_objetivo:
+                objeto_presente = True
+
+        if not objeto_presente:
+            objeto_en_cuadro = False
+
+    # Contar las instancias del objeto objetivo en este fotograma
+    for i in indices:
+        clase_actual = classes[class_ids[i]]
+        if clase_actual == clase_objetivo and not objeto_en_cuadro:
+            contador_objetivo += 1
+            objeto_en_cuadro = True
+
+    # Dibujar cuadros delimitadores y etiquetas en la imagen
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    for i in indices:
+        x, y, w, h = boxes[i]
+        clase_actual = classes[class_ids[i]]
+        label = f"{clase_actual}: {confidences[i]:.2f}"
+        color = (0, 255, 0)  # Color verde
+        cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+        cv2.putText(frame, label, (x, y - 10), font, 0.5, color, 2)
+
+    # Mostrar el recuento actual de instancias del objeto objetivo como etiqueta en la imagen
+    cv2.putText(frame, f"Conteo {clase_objetivo}: {contador_objetivo}", (10, 30), font, 1, (0, 0, 255), 2)
+
+    # Mostrar el fotograma resultante en tiempo real
+    cv2.imshow("Object Detection", frame)
+
+    # Detener el programa al presionar la tecla 'q'
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+# Liberar la cámara y cerrar la ventana
+cap.release()
+cv2.destroyAllWindows()
